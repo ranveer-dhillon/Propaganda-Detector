@@ -1,10 +1,15 @@
-# Propaganda Detector — Phase 1: Real-Time System Audio Transcriber
+# Propaganda Detector
 
-Phase 1 of a larger project. This part only captures whatever audio Windows
-is currently playing (a YouTube video, livestream, news broadcast, etc.) and
-transcribes it live to an on-screen caption overlay — no microphone involved.
-Sentiment/propaganda analysis is a later phase; this just produces a clean,
-structured transcript for that phase to consume later.
+A Windows desktop app that listens to whatever audio your PC is playing —
+a YouTube video, livestream, or news broadcast — and analyzes it in real
+time to surface sentiment, bias, and propaganda techniques as they're
+spoken. No microphone involved; it listens to system output, not you.
+
+The project is being built incrementally. Right now it covers the
+foundation: live system-audio capture and transcription, streamed to an
+on-screen caption overlay and written to a structured transcript file.
+The sentiment/bias/propaganda analysis layer builds on top of that
+transcript stream next.
 
 ## Requirements
 
@@ -56,12 +61,13 @@ have a compatible NVIDIA GPU for a large speedup.
 python main.py --model small.en --device cuda --compute-type float16
 ```
 
-## Output for later phases
+## Output for analysis
 
 Every session writes a timestamped JSON-lines file to `transcripts/`, one
 object per committed line: `{"timestamp": <unix time>, "text": "..."}`.
-Phase 2 (sentiment/propaganda/ticker analysis) can tail this file live or
-process it as a batch afterward, without touching any of this phase's code.
+The upcoming sentiment/propaganda/ticker analysis layer can tail this file
+live or process it as a batch, without touching the capture/transcription
+code at all.
 
 ## Project layout
 
@@ -69,8 +75,8 @@ process it as a batch afterward, without touching any of this phase's code.
   back to `soundcard`), resamples to 16kHz mono, emits overlapping windows.
 - `transcriber.py` — wraps `faster-whisper`, skips near-silent chunks,
   trims duplicate text across overlapping windows, emits `TranscriptSegment`s.
-- `overlay_ui.py` — the always-on-top, semi-transparent caption window
-  (PySide6). Pure display layer, driven entirely by Qt signals.
+- `overlay_ui.py` — the always-on-top caption window (PySide6). Pure
+  display layer, driven entirely by Qt signals.
 - `main.py` — wires the above together, handles start/stop, device
   selection, and writing the transcript file.
 
