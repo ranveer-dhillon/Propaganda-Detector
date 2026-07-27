@@ -97,30 +97,39 @@ class Transcriber:
             except queue.Empty:
                 continue
 
-            if _rms(chunk.data) < SILENCE_RMS_THRESHOLD:
-                continue
+            try:
+                self._process_chunk(chunk)
+            except Exception as exc:  # keep the pipeline alive on a bad chunk
+                print(f"[transcriber] error processing chunk: {exc!r}")
 
-            segments, _info = self.model.transcribe(
-                chunk.data,
-                language="en",
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=300),
-            )
-            text = " ".join(seg.text.strip() for seg in segments).strip()
-            if not text:
-                continue
+    def _process_chunk(self, chunk: AudioChunk) -> None:
+        rms = _rms(chunk.data)
+        if rms < SILENCE_RMS_THRESHOLD:
+            print(f"[transcriber] skipping chunk as silence (rms={rms:.5f})")
+            return
 
-            overlap = _longest_overlap(self._last_tail, text)
-            new_words = text.split()[overlap:]
-            if not new_words:
-                continue
-            committed_text = " ".join(new_words)
+        segments, _info = self.model.transcribe(
+            chunk.data,
+            language="en",
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=300),
+        )
+        text = " ".join(seg.text.strip() for seg in segments).strip()
+        print(f"[transcriber] rms={rms:.5f} raw_text={text!r}")
+        if not text:
+            return
 
-            self._last_tail = " ".join(text.split()[-12:])
+        overlap = _longest_overlap(self._last_tail, text)
+        new_words = text.split()[overlap:]
+        if not new_words:
+            return
+        committed_text = " ".join(new_words)
 
-            segment = TranscriptSegment(timestamp=chunk.timestamp, text=committed_text)
-            self._write_to_file(segment)
-            self.on_segment(segment)
+        self._last_tail = " ".join(text.split()[-12:])
+
+        segment = TranscriptSegment(timestamp=chunk.timestamp, text=committed_text)
+        self._write_to_file(segment)
+        self.on_segment(segment)
 
     def _write_to_file(self, segment: TranscriptSegment) -> None:
         if self.transcript_file is None:

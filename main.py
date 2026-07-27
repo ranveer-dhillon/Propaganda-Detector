@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from audio_capture import AudioChunk, LoopbackRecorder, list_output_devices
+from audio_capture import AudioChunk, LoopbackRecorder, get_default_loopback_device, list_output_devices
 from overlay_ui import OverlayWindow
 from transcriber import Transcriber, TranscriptSegment
 
@@ -38,7 +38,15 @@ class App:
         self.compute_type = compute_type
 
         self.devices = list_output_devices()
-        self.selected_device = self.devices[0] if self.devices else None
+        default_device = get_default_loopback_device()
+        default_index = 0
+        if default_device is not None:
+            for i, d in enumerate(self.devices):
+                if d.index == default_device.index:
+                    default_index = i
+                    break
+        self.selected_device = self.devices[default_index] if self.devices else None
+        print(f"[main] default output device: {self.selected_device.name if self.selected_device else None!r}")
 
         self.audio_queue: "queue.Queue[AudioChunk]" = queue.Queue(maxsize=50)
         self.recorder: LoopbackRecorder | None = None
@@ -47,6 +55,7 @@ class App:
         self.bridge = _SegmentBridge()
         self.window = OverlayWindow()
         self.window.set_devices([d.name for d in self.devices] or ["Default output"])
+        self.window.device_combo.setCurrentIndex(default_index)
 
         self.window.start_clicked.connect(self.start)
         self.window.stop_clicked.connect(self.stop)
@@ -120,8 +129,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        default="auto",
-        help="Compute device for faster-whisper: auto, cpu, or cuda (default: auto)",
+        default="cpu",
+        help="Compute device for faster-whisper: cpu, cuda, or auto (default: cpu; "
+        "cuda/auto require the CUDA toolkit's cuBLAS/cuDNN DLLs to be installed)",
     )
     parser.add_argument(
         "--compute-type",

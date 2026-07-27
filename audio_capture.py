@@ -52,6 +52,27 @@ class AudioChunk:
     sample_rate: int = TARGET_SAMPLE_RATE
 
 
+def get_default_loopback_device() -> AudioDevice | None:
+    """Return the loopback device matching Windows' current default output
+    device (what's actually playing audio right now), or None if unavailable.
+    """
+    if _BACKEND != "pyaudiowpatch":
+        return None
+    pa = pyaudio.PyAudio()
+    try:
+        dev = pa.get_default_wasapi_loopback()
+        return AudioDevice(
+            index=dev["index"],
+            name=dev["name"],
+            sample_rate=int(dev["defaultSampleRate"]),
+            channels=dev["maxInputChannels"],
+        )
+    except Exception:
+        return None
+    finally:
+        pa.terminate()
+
+
 def list_output_devices() -> list[AudioDevice]:
     """List loopback-capable output devices (speakers/headphones)."""
     if _BACKEND == "pyaudiowpatch":
@@ -142,16 +163,24 @@ class LoopbackRecorder:
             hop = int(src_rate * (self.window_seconds - self.overlap_seconds))
             hop = max(hop, 1)
 
+            print(f"[audio_capture] capturing from: {dev_info['name']!r} "
+                  f"(index={dev_info['index']}, rate={src_rate}, channels={channels})")
+
             buffer = np.zeros(0, dtype=np.float32)
             buffer_lock = threading.Lock()
+            frames_seen = 0
 
             def callback(in_data, frame_count, time_info, status):
-                nonlocal buffer
+                nonlocal buffer, frames_seen
                 samples = np.frombuffer(in_data, dtype=np.float32)
                 if channels > 1:
                     samples = samples.reshape(-1, channels).mean(axis=1)
                 with buffer_lock:
                     buffer = np.concatenate([buffer, samples])
+                frames_seen += frame_count
+                if frames_seen % (src_rate * 2) < 1024:  # ~every 2s
+                    peak = float(np.abs(samples).max()) if len(samples) else 0.0
+                    print(f"[audio_capture] alive, last-buffer-peak={peak:.4f}")
                 return (None, pyaudio.paContinue)
 
             stream = pa.open(

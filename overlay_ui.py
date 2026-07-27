@@ -38,14 +38,12 @@ class OverlayWindow(QWidget):
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool
         )
-        self.setAttribute(Qt.WA_TranslucentBackground)
         self.resize(720, 220)
 
         self.setStyleSheet(
             """
             QWidget#root {
-                background-color: rgba(20, 20, 20, 190);
-                border-radius: 10px;
+                background-color: rgb(20, 20, 20);
             }
             QTextEdit {
                 background: transparent;
