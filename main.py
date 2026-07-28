@@ -1,34 +1,25 @@
-"""Phase 1: Real-Time System Audio Transcriber.
-
-Wires together audio_capture (WASAPI loopback) -> transcriber
-(faster-whisper) -> overlay_ui (live caption window), plus writing the
-running transcript to disk for later phases to consume.
-"""
-
-from __future__ import annotations
-
 import argparse
 import queue
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from audio_capture import AudioChunk, LoopbackRecorder, get_default_loopback_device, list_output_devices
 from overlay_ui import OverlayWindow
-from transcriber import Transcriber, TranscriptSegment
+from transcriber import SessionStats, Transcriber, TranscriptSegment
 
 TRANSCRIPTS_DIR = Path(__file__).parent / "transcripts"
 
 
+# Relays TranscriptSegments from the transcriber's worker thread to the
+# Qt UI thread (Qt auto-queues signal delivery across threads).
 class _SegmentBridge(QObject):
-    """Relays TranscriptSegments from the transcriber's worker thread to
-    the Qt UI thread (Qt auto-queues signal delivery across threads).
-    """
-
     new_text = Signal(str)
+    stats_updated = Signal(float, int, int)  # words_per_minute, stutter_count, pause_count
 
 
 class App:
@@ -49,8 +40,8 @@ class App:
         print(f"[main] default output device: {self.selected_device.name if self.selected_device else None!r}")
 
         self.audio_queue: "queue.Queue[AudioChunk]" = queue.Queue(maxsize=50)
-        self.recorder: LoopbackRecorder | None = None
-        self.transcriber: Transcriber | None = None
+        self.recorder: Optional[LoopbackRecorder] = None
+        self.transcriber: Optional[Transcriber] = None
 
         self.bridge = _SegmentBridge()
         self.window = OverlayWindow()
@@ -62,7 +53,10 @@ class App:
         self.window.clear_clicked.connect(self._on_clear)
         self.window.save_clicked.connect(self._on_save)
         self.window.device_changed.connect(self._on_device_changed)
+        # Qt auto-queues this connection across threads, so it's safe for the
+        # transcriber's background thread to trigger a UI update through it.
         self.bridge.new_text.connect(self.window.append_text)
+        self.bridge.stats_updated.connect(self.window.update_stats)
 
     def _on_device_changed(self, idx: int) -> None:
         if 0 <= idx < len(self.devices):
@@ -92,6 +86,7 @@ class App:
             device=self.device_arg,
             compute_type=self.compute_type,
             transcript_file=session_file,
+            on_stats=self._on_stats,
         )
         self.transcriber.start()
 
@@ -100,6 +95,7 @@ class App:
         )
         self.recorder.start()
 
+        self.window.update_stats(0.0, 0, 0)
         self.window.set_running(True)
 
     def stop(self) -> None:
@@ -112,8 +108,13 @@ class App:
         self.window.set_running(False)
 
     def _on_segment(self, segment: TranscriptSegment) -> None:
-        # Called from the transcriber's background thread.
+        # Called from the transcriber's background thread — emit through the
+        # bridge rather than touching the Qt window directly from here.
         self.bridge.new_text.emit(segment.text)
+
+    def _on_stats(self, stats: SessionStats) -> None:
+        # Also called from the transcriber's background thread.
+        self.bridge.stats_updated.emit(stats.words_per_minute, stats.stutter_count, stats.pause_count)
 
     def shutdown(self) -> None:
         self.stop()
@@ -135,8 +136,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compute-type",
-        default="default",
-        help="faster-whisper compute_type, e.g. int8, float16, default",
+        default="int8",
+        help="faster-whisper compute_type, e.g. int8, float16, default "
+        "(int8 is fastest on CPU, default's float32 fallback is noticeably slower)",
     )
     return parser.parse_args()
 

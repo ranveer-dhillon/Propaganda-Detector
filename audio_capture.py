@@ -1,16 +1,14 @@
-"""WASAPI loopback audio capture.
-
-Captures whatever the Windows default output device is playing (system audio),
-not the microphone, and pushes raw float32 mono chunks onto a queue for
-downstream consumption (see transcriber.py).
-"""
-
-from __future__ import annotations
+# WASAPI loopback audio capture.
+#
+# Captures whatever the Windows default output device is playing (system
+# audio), not the microphone, and pushes raw float32 mono chunks onto a
+# queue for downstream consumption (see transcriber.py).
 
 import queue
 import threading
 import time
 from dataclasses import dataclass
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -37,25 +35,23 @@ TARGET_SAMPLE_RATE = 16000  # what faster-whisper expects
 
 @dataclass
 class AudioDevice:
-    index: int | str
+    index: Union[int, str]
     name: str
     sample_rate: int
     channels: int
 
 
+# A slice of resampled, mono, float32 PCM audio.
 @dataclass
 class AudioChunk:
-    """A slice of resampled, mono, float32 PCM audio."""
-
     data: np.ndarray  # shape (n_samples,), dtype float32, range [-1, 1]
     timestamp: float  # time.time() when this chunk finished capturing
     sample_rate: int = TARGET_SAMPLE_RATE
 
 
-def get_default_loopback_device() -> AudioDevice | None:
-    """Return the loopback device matching Windows' current default output
-    device (what's actually playing audio right now), or None if unavailable.
-    """
+# Returns the loopback device matching Windows' current default output
+# device (what's actually playing audio right now), or None if unavailable.
+def get_default_loopback_device() -> Optional[AudioDevice]:
     if _BACKEND != "pyaudiowpatch":
         return None
     pa = pyaudio.PyAudio()
@@ -73,8 +69,8 @@ def get_default_loopback_device() -> AudioDevice | None:
         pa.terminate()
 
 
-def list_output_devices() -> list[AudioDevice]:
-    """List loopback-capable output devices (speakers/headphones)."""
+# Lists loopback-capable output devices (speakers/headphones).
+def list_output_devices() -> List[AudioDevice]:
     if _BACKEND == "pyaudiowpatch":
         devices = []
         pa = pyaudio.PyAudio()
@@ -112,15 +108,13 @@ def _resample_linear(data: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarr
     return np.interp(dst_times, src_times, data).astype(np.float32)
 
 
+# Continuously captures system audio and emits fixed-size overlapping
+# windows onto out_queue as AudioChunk objects.
 class LoopbackRecorder:
-    """Continuously captures system audio and emits fixed-size overlapping
-    windows onto `out_queue` as AudioChunk objects.
-    """
-
     def __init__(
         self,
         out_queue: "queue.Queue[AudioChunk]",
-        device: AudioDevice | None = None,
+        device: Optional[AudioDevice] = None,
         window_seconds: float = 4.0,
         overlap_seconds: float = 1.0,
     ):
@@ -129,7 +123,7 @@ class LoopbackRecorder:
         self.window_seconds = window_seconds
         self.overlap_seconds = overlap_seconds
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -200,6 +194,9 @@ class LoopbackRecorder:
                     with buffer_lock:
                         if len(buffer) < frames_per_window:
                             continue
+                        # Windows overlap by overlap_seconds so a sentence that
+                        # straddles a window boundary still appears whole in one
+                        # of the two windows (transcriber.py dedups the overlap).
                         window = buffer[:frames_per_window].copy()
                         buffer = buffer[hop:]
                     resampled = _resample_linear(window, src_rate, TARGET_SAMPLE_RATE)

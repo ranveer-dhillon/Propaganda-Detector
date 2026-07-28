@@ -1,11 +1,10 @@
-"""Always-on-top, semi-transparent live caption overlay.
+# Always-on-top, semi-transparent live caption overlay.
+#
+# Pure display layer: it only knows how to append text and expose user
+# actions (start/stop/clear/save/device change) via Qt signals. main.py
+# wires those signals to the audio capture + transcriber pipeline.
 
-Pure display layer: it only knows how to append text and expose user
-actions (start/stop/clear/save/device change) via Qt signals. main.py
-wires those signals to the audio capture + transcriber pipeline.
-"""
-
-from __future__ import annotations
+from typing import List
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -31,7 +30,7 @@ class OverlayWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self._full_transcript: list[str] = []
+        self._full_transcript: List[str] = []
         self._running = False
 
         self.setWindowTitle("Live Captions")
@@ -92,6 +91,9 @@ class OverlayWindow(QWidget):
         top_bar.addWidget(self.close_button)
         outer.addLayout(top_bar)
 
+        self.stats_label = QLabel("0 WPM   0 stutters   0 pauses")
+        outer.addWidget(self.stats_label)
+
         self.text_area = QTextEdit()
         self.text_area.setReadOnly(True)
         outer.addWidget(self.text_area, 1)
@@ -126,7 +128,7 @@ class OverlayWindow(QWidget):
 
     # -- public API -----------------------------------------------------------
 
-    def set_devices(self, names: list[str]) -> None:
+    def set_devices(self, names: List[str]) -> None:
         self.device_combo.clear()
         self.device_combo.addItems(names)
 
@@ -145,6 +147,11 @@ class OverlayWindow(QWidget):
                 cursor.deleteChar()
         scrollbar = self.text_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+    def update_stats(self, words_per_minute: float, stutter_count: int, pause_count: int) -> None:
+        self.stats_label.setText(
+            f"{words_per_minute:.0f} WPM   {stutter_count} stutters   {pause_count} pauses"
+        )
 
     def full_transcript(self) -> str:
         return "\n".join(self._full_transcript)
